@@ -1,9 +1,12 @@
 package capture
 
 import (
+	"context"
+	"errors"
 	"image"
 	"image/color"
 	"testing"
+	"time"
 
 	"github.com/phillip-england/ibot/internal/model"
 )
@@ -29,5 +32,21 @@ func TestClamp(t *testing.T) {
 		if got := clamp(test.value, 0, 10); got != test.want {
 			t.Errorf("clamp(%d) = %d, want %d", test.value, got, test.want)
 		}
+	}
+}
+
+func TestWaitForScreenshot(t *testing.T) {
+	started := time.Now()
+	if err := waitForScreenshot(context.Background(), 10*time.Millisecond); err != nil {
+		t.Fatalf("waitForScreenshot() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 10*time.Millisecond {
+		t.Fatalf("waitForScreenshot() returned after %v", elapsed)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForScreenshot(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForScreenshot() error = %v, want context.Canceled", err)
 	}
 }

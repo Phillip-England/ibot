@@ -7,9 +7,11 @@ import (
 	"image"
 	"image/png"
 	"sync"
+	"time"
 
 	"github.com/go-vgo/robotgo"
 	"github.com/phillip-england/ibot/internal/model"
+	"github.com/phillip-england/ibot/internal/sound"
 	hook "github.com/robotn/gohook"
 	"golang.org/x/image/draw"
 )
@@ -25,6 +27,8 @@ type Service interface {
 type Desktop struct {
 	mu sync.Mutex
 }
+
+const screenshotDelay = time.Second
 
 func NewDesktop() *Desktop { return &Desktop{} }
 
@@ -59,6 +63,7 @@ func waitPoint(ctx context.Context, prompt Prompt, message string) (model.Positi
 	if !hook.AddEvent("0") {
 		return model.Position{}, fmt.Errorf("global keyboard listener stopped before 0 was captured")
 	}
+	sound.Blip()
 	if err := ctx.Err(); err != nil {
 		return model.Position{}, err
 	}
@@ -67,13 +72,14 @@ func waitPoint(ctx context.Context, prompt Prompt, message string) (model.Positi
 }
 
 func (desktop *Desktop) PNG(ctx context.Context, corners [4]model.Position) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
+	if err := waitForScreenshot(ctx, screenshotDelay); err != nil {
 		return nil, err
 	}
 	screenshot, err := robotgo.CaptureImg()
 	if err != nil {
 		return nil, fmt.Errorf("capture screen: %w", err)
 	}
+	sound.Done()
 	logicalWidth, logicalHeight := robotgo.GetScreenSize()
 	if logicalWidth <= 0 || logicalHeight <= 0 {
 		return nil, fmt.Errorf("capture screen: invalid logical screen size")
@@ -93,6 +99,17 @@ func (desktop *Desktop) PNG(ctx context.Context, corners [4]model.Position) ([]b
 		return nil, fmt.Errorf("encode captured PNG: %w", err)
 	}
 	return output.Bytes(), nil
+}
+
+func waitForScreenshot(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func resize(source image.Image, width, height int) image.Image {

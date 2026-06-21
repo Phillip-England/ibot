@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Copy-ready Python utilities for desktop automation projects.">
+  <title>ibot utilities</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Portable Python toolkit</p>
+        <h1>Useful functions.<br><span>Ready to paste.</span></h1>
+      </div>
+      <div class="hero-actions">
+        <nav class="site-nav" aria-label="Main navigation">
+          <a href="/">Studio</a>
+          <a class="active" href="/utilities.html">Utilities</a>
+        </nav>
+        <div class="local-badge"><i></i> Running locally</div>
+      </div>
+    </header>
+
+    <div class="utility-intro">
+      <p class="step">Utility library</p>
+      <h2>Self-contained building blocks</h2>
+      <p>Every initialized project includes these in <code>utilities.py</code>. Import only what you use, for example <code>from .utilities import random_wait</code>.</p>
+    </div>
+
+    <div class="utility-search">
+      <label for="utility-query">Search utilities</label>
+      <input id="utility-query" type="search" placeholder="Search by name, category, import, or code" autocomplete="off">
+      <p id="utility-count" aria-live="polite">9 utilities</p>
+    </div>
+
+    <section class="utility-grid" aria-label="Python utility functions">
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="hotkey-details">
+          <div>
+            <p class="step">Keyboard</p>
+            <h2>Cross-platform hotkey</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="hotkey-details" class="utility-details" hidden>
+          <p class="utility-description">Use one key tuple for Windows and Linux and another for macOS.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import platform<br>import pyautogui</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="hotkey-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="hotkey-source">import platform
+
+import pyautogui
+
+
+def press_hotkey(windows_linux_keys, mac_keys):
+    keys = mac_keys if platform.system() == "Darwin" else windows_linux_keys
+    aliases = {"control": "ctrl"}
+    pyautogui.hotkey(*(aliases.get(key, key) for key in keys))
+
+
+# Example: press_hotkey(("control", "l"), ("command", "l"))</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="roll-details">
+          <div>
+            <p class="step">Randomness</p>
+            <h2>Roll a chance</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="roll-details" class="utility-details" hidden>
+          <p class="utility-description">Return true with the requested chance out of a total, which defaults to 100 for percentages.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import random</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="roll-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="roll-source">import random
+
+
+def roll(chance, out_of=100):
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in (chance, out_of)):
+        raise TypeError("chance and out_of must be numbers")
+    if out_of &lt;= 0:
+        raise ValueError("out_of must be greater than zero")
+    if chance &lt; 0 or chance &gt; out_of:
+        raise ValueError("expected 0 &lt;= chance &lt;= out_of")
+    return random.random() * out_of &lt; chance
+
+
+# Example: roll(1) returns true 1% of the time</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="json-target-details">
+          <div>
+            <p class="step">Saved targets</p>
+            <h2>Click point and box JSON</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="json-target-details" class="utility-details" hidden>
+          <p class="utility-description">Load files captured by ibot and click an exact or randomized location around a saved point or box center, or anywhere in a saved box. An optional fixed or ranged delay moves the pointer first, waits, and then clicks.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import json<br>import os<br>import random<br>import time<br>import pyautogui</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="json-target-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="json-target-source">import json
+import os
+import random
+import time
+
+import pyautogui
+
+
+def _read_target(*path):
+    with open(os.path.join(*path), encoding="utf-8") as target_file:
+        return json.load(target_file)
+
+
+def _click_target(x, y, delay=None):
+    if delay is None:
+        delay_range = None
+    elif isinstance(delay, (int, float)) and not isinstance(delay, bool):
+        delay_range = (delay, delay)
+    elif isinstance(delay, (tuple, list)) and len(delay) == 2:
+        delay_range = delay
+    else:
+        raise ValueError("delay must be a non-negative number or a two-number range")
+    if delay_range is not None:
+        minimum, maximum = delay_range
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in delay_range):
+            raise ValueError("delay must be a non-negative number or a two-number range")
+        if minimum &lt; 0 or maximum &lt; minimum:
+            raise ValueError("expected 0 &lt;= delay minimum &lt;= delay maximum")
+
+    pyautogui.moveTo(x=x, y=y)
+    if delay_range is not None:
+        time.sleep(random.uniform(minimum, maximum))
+    pyautogui.click()
+
+
+def click_saved_point(*path, variation=0, delay=None):
+    point = _read_target(*path)
+    x, y = int(point["x"]), int(point["y"])
+    if not isinstance(variation, int) or isinstance(variation, bool) or variation &lt; 0:
+        raise ValueError("point variation must be a non-negative integer")
+    if variation:
+        x = random.randint(x - variation, x + variation)
+        y = random.randint(y - variation, y + variation)
+    _click_target(x, y, delay)
+
+
+def click_saved_box(*path, variation=0, delay=None):
+    corners = _read_target(*path)["corners"]
+    left = min(int(point["x"]) for point in corners)
+    right = max(int(point["x"]) for point in corners)
+    top = min(int(point["y"]) for point in corners)
+    bottom = max(int(point["y"]) for point in corners)
+    center_x, center_y = (left + right) // 2, (top + bottom) // 2
+    if isinstance(variation, str) and variation.lower() == "all":
+        x, y = random.randint(left, right), random.randint(top, bottom)
+    else:
+        if not isinstance(variation, int) or isinstance(variation, bool) or variation &lt; 0:
+            raise ValueError('box variation must be a non-negative integer or "all"')
+        if variation:
+            x = random.randint(max(left, center_x - variation), min(right, center_x + variation))
+            y = random.randint(max(top, center_y - variation), min(bottom, center_y + variation))
+        else:
+            x, y = center_x, center_y
+    _click_target(x, y, delay)
+
+
+# click_saved_point("points", "submit.json", variation=5, delay=(0.5, 1))
+# click_saved_box("boxes", "inventory.json", variation="all", delay=(0.5, 1))</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="random-number-details">
+          <div>
+            <p class="step">Randomness</p>
+            <h2>Random number in a range</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="random-number-details" class="utility-details" hidden>
+          <p class="utility-description">Choose a random integer between two inclusive bounds.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import random</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="random-number-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="random-number-source">import random
+
+
+def random_number(minimum, maximum):
+    if minimum &gt; maximum:
+        raise ValueError("minimum must be less than or equal to maximum")
+    return random.randint(minimum, maximum)
+
+
+# Example: random_number(1, 100)</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="random-actions-details">
+          <div>
+            <p class="step">Randomness</p>
+            <h2>Perform random actions</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="random-actions-details" class="utility-details" hidden>
+          <p class="utility-description">Run a random number of unique actions in random order, within the requested inclusive bounds.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import random</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="random-actions-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="random-actions-source">import random
+
+
+def random_number(minimum, maximum):
+    if minimum &gt; maximum:
+        raise ValueError("minimum must be less than or equal to maximum")
+    return random.randint(minimum, maximum)
+
+
+def perform_random_actions(min_actions, max_actions, actions):
+    actions = list(actions)
+    if min_actions &lt; 0 or max_actions &lt; min_actions:
+        raise ValueError("expected 0 &lt;= min_actions &lt;= max_actions")
+    if max_actions &gt; len(actions):
+        raise ValueError("max_actions cannot exceed the number of actions")
+
+    if not all(callable(action) for action in actions):
+        raise TypeError("every action must be callable")
+
+    amount = random_number(min_actions, max_actions)
+    for action in random.sample(actions, amount):
+        action()
+
+
+# Example:
+# actions = [open_menu, claim_reward, close_popup, dismiss_banner]
+# perform_random_actions(0, 3, actions)</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="wait-details">
+          <div>
+            <p class="step">Timing</p>
+            <h2>Random wait</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="wait-details" class="utility-details" hidden>
+          <p class="utility-description">Pause for a random number of seconds inside an inclusive range.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import random<br>import time</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="wait-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="wait-source">import random
+import time
+
+
+def random_wait(min_seconds, max_seconds):
+    if min_seconds &lt; 0 or max_seconds &lt; min_seconds:
+        raise ValueError("expected 0 &lt;= min_seconds &lt;= max_seconds")
+    duration = random.uniform(min_seconds, max_seconds)
+    time.sleep(duration)
+    return duration
+
+
+# Example: random_wait(10, 20)</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="wait-until-details">
+          <div>
+            <p class="step">Timing</p>
+            <h2>Wait until ready</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="wait-until-details" class="utility-details" hidden>
+          <p class="utility-description">Poll a condition until it returns a truthy value or the timeout expires.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import time</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="wait-until-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="wait-until-source">import time
+
+
+def wait_until(predicate, timeout=30, interval=0.25):
+    if timeout &lt; 0 or interval &lt;= 0:
+        raise ValueError("timeout must be non-negative and interval must be positive")
+    deadline = time.monotonic() + timeout
+    while True:
+        result = predicate()
+        if result:
+            return result
+        if time.monotonic() &gt;= deadline:
+            return None
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+
+
+# Example: button = wait_until(find_submit_button, timeout=10)</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="retry-details">
+          <div>
+            <p class="step">Recovery</p>
+            <h2>Retry an action</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="retry-details" class="utility-details" hidden>
+          <p class="utility-description">Retry a failing action, then re-raise its last exception when every attempt fails.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import time</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="retry-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="retry-source">import time
+
+
+def retry(action, attempts=3, delay=0):
+    if attempts &lt; 1:
+        raise ValueError("attempts must be at least one")
+    if delay &lt; 0:
+        raise ValueError("delay must be non-negative")
+    for attempt in range(attempts):
+        try:
+            return action()
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            if delay:
+                time.sleep(delay)
+
+
+# Example: retry(click_submit, attempts=3, delay=1)</code></pre>
+        </div>
+      </article>
+
+      <article class="panel utility-card" data-utility>
+        <button class="utility-header" type="button" aria-expanded="false" aria-controls="sequence-details">
+          <div>
+            <p class="step">Timing</p>
+            <h2>Run actions with random waits</h2>
+          </div>
+          <span class="utility-open-label"><span class="utility-open-text">Open</span><i aria-hidden="true"></i></span>
+        </button>
+        <div id="sequence-details" class="utility-details" hidden>
+          <p class="utility-description">Run a list of functions in order, waiting for a random duration between each action.</p>
+          <div class="utility-imports">
+            <p class="step">Required imports</p>
+            <code>import random<br>import time</code>
+          </div>
+          <div class="utility-code-header">
+            <p class="step">Complete source</p>
+            <button class="copy-button utility-copy" type="button" data-copy="sequence-source">Copy code</button>
+          </div>
+          <pre class="utility-code"><code id="sequence-source">import random
+import time
+
+
+def run_with_random_wait(min_seconds, max_seconds, functions):
+    if min_seconds &lt; 0 or max_seconds &lt; min_seconds:
+        raise ValueError("expected 0 &lt;= min_seconds &lt;= max_seconds")
+    if not all(callable(function) for function in functions):
+        raise TypeError("every item in functions must be callable")
+
+    for index, function in enumerate(functions):
+        function()
+        if index &lt; len(functions) - 1:
+            time.sleep(random.uniform(min_seconds, max_seconds))
+
+
+# Example:
+# run_with_random_wait(1, 3, [open_menu, select_item, save_changes])</code></pre>
+        </div>
+      </article>
+    </section>
+
+    <p id="utility-empty" class="utility-empty" hidden>No utilities match that search.</p>
+
+    <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="/utilities.js" defer></script>
+</body>
+</html>

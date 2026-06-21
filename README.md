@@ -44,10 +44,12 @@ ibot --help
 
 | Command | Generated behavior | Available flags |
 | --- | --- | --- |
-| `ibot click [name]` | Click a captured coordinate | `--vary`, `--hold`, `--no-imports` |
-| `ibot box name` | Click the center or a random point in a captured box | `--vary`, `--no-imports` |
-| `ibot click_image [name]` | Locate and click an embedded image | `--vary`, `--confidence`, `--wait-for`, `--timeout`, `--stall`, `--all`, `--order`, `--gap`, `--hold`, `--no-imports` |
-| `ibot serve` | Start the embedded local web application | `--addr`, `--open` |
+| `ibot click [name]` | Click a captured coordinate or save it as JSON | `--vary`, `--delay`, `--hold`, `--no-imports`, `--save-json` |
+| `ibot box [name]` | Click a captured box, target a grid cell, or save it as JSON | `--vary`, `--delay`, `--grid-rows`, `--grid-columns`, `--grid-cell`, `--no-imports`, `--save-json` |
+| `ibot click_image [name]` | Locate an embedded image, then click it or wait without clicking | `--vary`, `--confidence`, `--wait-for`, `--no-click`, `--wait-until-gone`, `--timeout`, `--delay`, `--all`, `--order`, `--gap`, `--hold`, `--no-imports` |
+| `ibot init PROJECT` | Create a Python automation module and its asset directories | |
+| `ibot patch-utilities PROJECT` | Replace `utilities.py` with the current ibot utilities | |
+| `ibot serve [PROJECT]` | Start the embedded local web application | `--addr`, `--open` |
 
 Flags can be placed before or after the optional function name. All meaningful
 flag combinations are supported. Two dependency rules are enforced before
@@ -56,17 +58,53 @@ screen capture begins:
 - `--order` requires `--all`, unless its default value is `linear`.
 - `--gap` requires `--all`.
 
-`--timeout` is accepted without `--wait-for` but has no effect because a
-non-waiting function performs only one search. All other `click_image` flags
-can be combined directly.
+`--timeout` is accepted without an image wait option but has no effect because a
+non-waiting function performs only one search.
 
 ## Web Application
 
-Start the browser interface with the same installed binary:
+Create a project once, then point the browser interface at it:
 
 ```sh
-ibot serve
+ibot init ./automation
+ibot serve ./automation
 ```
+
+The initialized layout is immediately importable as a Python package:
+
+```text
+automation/
+├── __init__.py
+├── utilities.py
+├── points/
+├── boxes/
+└── images/
+```
+
+The web form has an explicit **Save capture as** choice. Point captures can be
+saved to `points/NAME.json`, box captures to `boxes/NAME.json`, and image
+captures to `images/NAME.png`. Choosing **Python function** instead writes
+`NAME.py` into the module and adds its import to `__init__.py`.
+
+All browser utilities are installed in `utilities.py`, so application code can
+import only what it needs:
+
+```python
+from automation.utilities import click_saved_point, random_wait
+```
+
+Running `ibot init` again is non-destructive: it creates missing standard files
+and directories without replacing existing Python files.
+
+Update an existing project's managed utility functions without changing its
+generated functions or imports:
+
+```sh
+ibot patch-utilities ./automation
+```
+
+For a temporary function-only session, `ibot serve` without a project still
+works. Asset saving requires an initialized project.
 
 The server listens on `127.0.0.1:8787` and opens the default browser. To keep
 the browser closed or select another loopback port:
@@ -76,6 +114,70 @@ ibot serve --open=false
 ibot serve --addr=127.0.0.1:9000
 ```
 
+The older explicit-directory form remains available for compatibility:
+
+```sh
+ibot serve export="./some/path/to/python/module"
+# Equivalent: ibot serve --export="./some/path/to/python/module"
+ibot serve --points=./targets/points --boxes=./targets/boxes --images=./targets/images
+```
+
+The module must contain an existing `__init__.py`. A function named `foo` is
+written to `foo.py`, and `from .foo import *` is added to `__init__.py` once.
+The browser's **Copy code** button remains available in export mode.
+
+### Saved JSON Targets
+
+Capture reusable coordinates and boxes without generating Python source:
+
+```sh
+ibot click --save-json=./targets/points/submit.json
+ibot box --save-json=./targets/boxes/inventory.json
+```
+
+Point files contain `x` and `y` fields. Box files contain the four captured
+`corners` in top-left, top-right, bottom-right, bottom-left order:
+
+```json
+{
+  "x": 800,
+  "y": 450
+}
+```
+
+```json
+{
+  "corners": [
+    {"x": 100, "y": 200},
+    {"x": 300, "y": 200},
+    {"x": 300, "y": 400},
+    {"x": 100, "y": 400}
+  ]
+}
+```
+
+`ibot server` is an alias for `ibot serve`.
+
+Both directories must already exist. The studio lists every `.json` file and
+its current coordinates. Select **Edit with 0**, move the pointer as prompted,
+and press `0` once for a point or once at each of a box's four corners. The
+server atomically replaces the selected JSON file and refreshes its displayed
+value. The Utilities page includes `click_saved_point` and `click_saved_box`
+Python helpers for consuming these files directly. Their `variation` argument
+supports exact and randomized clicks:
+
+```python
+click_saved_point("points", "submit.json")                # exact point
+click_saved_point("points", "submit.json", variation=5)   # within 5 pixels
+click_saved_box("boxes", "inventory.json")                # exact center
+click_saved_box("boxes", "inventory.json", variation=5)   # within 5 pixels of center
+click_saved_box("boxes", "inventory.json", variation="all")  # anywhere in box
+click_saved_point("points", "submit.json", variation=3, delay=(0.5, 1))  # move, wait 0.5-1s, click
+```
+
+`delay` may be a fixed number of seconds or a `(minimum, maximum)` range. When
+provided, the helper moves to the selected location, waits, and then clicks.
+
 Non-loopback addresses are rejected because the application can observe global
 keyboard input and capture the local screen. The HTTP layer also rejects
 cross-origin browser requests, limits request bodies, and sets a restrictive
@@ -83,7 +185,7 @@ Content Security Policy.
 
 The web interface exposes the same generator as the CLI:
 
-1. Select **Point**, **Box**, or **Image**.
+1. Select **Point**, **Box**, **Click image**, or **Image exists**.
 2. Configure the function name and flags.
 3. Select **Start capture**.
 4. Follow the live prompt and press `0` at the requested point or four corners.
@@ -93,10 +195,16 @@ Capture prompts are streamed from Go to the browser while the global input
 listener is active. No screenshot or generated source is uploaded anywhere;
 all processing remains in the local `ibot` process.
 
-The UI supports image confidence, waiting and timeout, fixed or ranged stalls,
-all-match clicking, linear/backwards/random order, fixed or ranged gaps,
-position variation, held keys, and import omission. CLI and web requests call
-the same typed Go generator, so their output behavior is identical.
+The UI can also generate a boolean image-existence function that returns `True`
+when the captured image is visible and `False` when it is absent. Behavior
+choices in the studio and CLI become default parameter values in the generated
+function. Every call can override them, while a zero-argument call retains the
+behavior selected during generation.
+
+The **Utilities** page provides self-contained, copy-ready Python helpers for
+cross-platform hotkeys, randomized waits, inclusive random numbers, and random
+selection from action lists. Timeout fields accept both whole and decimal
+seconds.
 
 ## Generated Python Runtime
 
@@ -111,6 +219,29 @@ python -m pip install pyautogui pillow opencv-python-headless
 prevent PyAutoGUI from capturing or controlling the local desktop. Generated
 point and box functions that do not use image matching need only `pyautogui`.
 
+### Dynamic generated functions
+
+Captured coordinates, box bounds, and PNG bytes are embedded data. Generated
+function parameters control runtime behavior:
+
+```python
+click_submit(variation=4, delay=(0.5, 1), hold=("shift",))
+click_inventory(grid=(4, 4, 3), variation="all", delay=0.25)
+click_icon(
+    confidence=0.85, wait_for=True, timeout=20,
+    all_matches=True, order="random",
+    position="bottom_right", variation=3,
+    delay=(0.5, 1), gap=0.25, hold=("ctrl",),
+)
+```
+
+Image `position` accepts `top_left`, `top`, `top_right`, `left`, `center`,
+`right`, `bottom_left`, `bottom`, or `bottom_right`. An `(x, y)` pair selects a
+proportional location, so `(0.25, 0.75)` means 25% from the left and 75% from
+the top. Numeric variation applies around that position; `variation="all"`
+selects anywhere in the match. Image functions also expose `wait_until_gone`,
+`poll_interval`, and `click`. Image-existence functions accept `confidence`.
+
 ## Point Clicks
 
 ```sh
@@ -121,7 +252,7 @@ ibot click click_submit
 2. Press the `0` key. You do not need to click the mouse.
 3. Paste the generated function into your project.
 
-Vary the click position at execution time with `--vary`:
+Set the function's default variation with `--vary`:
 
 ```sh
 ibot click click_submit --vary=5
@@ -136,14 +267,17 @@ captured coordinate. For example, a captured position of `(5, 5)` with
 The generated output for the command above includes the runtime randomness:
 
 ```python
-import pyautogui
 import random
+import time
+
+import pyautogui
 
 
-def click_submit() -> None:
-    """Click within 5 pixels of (800, 450) on each axis."""
-    click_x = random.randint(795, 805)
-    click_y = random.randint(445, 455)
+def click_submit(variation=5, delay=None, hold=()) -> None:
+    """Click the captured point; runtime arguments control click behavior."""
+    click_x = random.randint(800 - variation, 800 + variation)
+    click_y = random.randint(450 - variation, 450 + variation)
+    # The generated function validates delay and hold, then clicks safely.
     pyautogui.click(x=click_x, y=click_y)
 ```
 
@@ -155,26 +289,22 @@ ibot click --no-imports
 ibot click click_submit --vary=5 --no-imports
 ```
 
-With `--no-imports`, the destination must provide `pyautogui`. It must also
-provide `random` when `--vary` is greater than zero.
+With `--no-imports`, the destination must provide `pyautogui`, `random`, and
+`time` because point functions expose runtime variation and delay parameters.
 
-Example output without variation:
+The zero-argument call uses the generated defaults. Override them per call:
 
 ```python
-import pyautogui
-
-
-def click_submit() -> None:
-    """Click the screen at (800, 450)."""
-    pyautogui.click(x=800, y=450)
+click_submit()
+click_submit(variation=2, delay=(0.25, 0.75), hold="shift")
 ```
 
 If the function name is omitted, `ibot click` uses `click_position`.
 
 ### Holding Keys
 
-Point and image click functions can hold one or more keyboard keys while they
-click:
+Generated point, box, and image click functions can hold one or more keyboard
+keys while they click. Point and image CLI flags can set the default:
 
 ```sh
 ibot click click_submit --hold=shift
@@ -197,7 +327,8 @@ Keys are pressed in the listed order and released in reverse order. Generated
 functions use `try/finally`, track each successful `keyDown`, and attempt every
 corresponding `keyUp` even if a later key press or click raises an exception.
 
-For `click_image`, image polling and `--stall` finish before keys are pressed.
+For `click_image`, image polling finishes before keys are pressed. A configured
+`--delay` runs after movement while the requested keys are held.
 With `--all`, keys remain held across the complete click sequence, including
 `--gap` delays, and release after the last click or any failure.
 
@@ -221,13 +352,22 @@ The four captured points define an axis-aligned box. Without `--vary`, the
 generated function clicks the integer center of that box:
 
 ```python
-import pyautogui
-
-
-def click_inventory() -> None:
-    """Click the center of the captured box at (500, 350)."""
-    pyautogui.click(x=500, y=350)
+def click_inventory(variation=0, grid=None, delay=None, hold=()) -> None:
+    # Captured bounds are embedded; runtime code resolves the target center.
+    ...
 ```
+
+To divide the captured box into a grid and click one cell, provide its row
+count, column count, and zero-based cell number:
+
+```sh
+ibot box click_top_right --grid-rows=4 --grid-columns=4 --grid-cell=3
+```
+
+Cells are numbered left-to-right, starting in the top-left corner. For a 4 by
+4 grid, the first row is `0, 1, 2, 3`, the second row starts at `4`, and the
+last cell is `15`. The generated function clicks the integer center of the
+selected cell. Numeric `--vary` and `--vary=all` remain inside that cell.
 
 Use a number to select a new random point near the center every time the
 generated function runs:
@@ -251,15 +391,15 @@ The generated function contains the random selection; the box is not
 randomized while the code is being generated:
 
 ```python
-import pyautogui
 import random
+import time
+
+import pyautogui
 
 
-def click_inventory() -> None:
-    """Click a random point in the box (400, 300) to (600, 400)."""
-    click_x = random.randint(400, 600)
-    click_y = random.randint(300, 400)
-    pyautogui.click(x=click_x, y=click_y)
+def click_inventory(variation="all", grid=None, delay=None, hold=()) -> None:
+    # Captured bounds are embedded; runtime code applies variation and grid.
+    ...
 ```
 
 `--no-imports` is also available for box functions:
@@ -268,8 +408,8 @@ def click_inventory() -> None:
 ibot box click_inventory --vary=all --no-imports
 ```
 
-The destination module must already provide `pyautogui`, plus `random` when
-using numeric variation or `--vary=all`.
+The destination module must already provide `pyautogui`, `random`, and `time`
+because box functions expose runtime variation and delay parameters.
 
 Run `ibot click --help` or `ibot box --help` for complete command-line help.
 
@@ -342,27 +482,48 @@ with `--timeout`:
 ibot click_image click_chrome_icon --wait-for --timeout=20
 ```
 
-`--timeout` only affects functions generated with `--wait-for`. If the image
-does not appear before the deadline, the generated function raises an error
-and does not click.
+`--timeout` only affects functions generated with `--wait-for` or
+`--wait-until-gone`. If the requested condition is not met before the deadline,
+the generated function raises an error and does not click.
 
-Use `--stall` to delay after the image is found but before it is clicked. A
-single value always waits exactly that many seconds:
+Use `--wait-until-gone` to poll until the captured image disappears. This
+generates a waiting function that does not click anything:
 
 ```sh
-ibot click_image click_chrome_icon --wait-for --stall=1
+ibot click_image wait_for_spinner --wait-until-gone --timeout=20
+```
+
+If the image is already absent, the function returns immediately. If it stays
+visible through the timeout, the function raises an error. This mode cannot be
+combined with `--wait-for` or click-specific options such as `--vary`,
+`--delay`, `--all`, `--order`, `--gap`, and `--hold`.
+
+Use `--no-click` with `--wait-for` when the function should return as soon as
+the captured image appears without clicking it:
+
+```sh
+ibot click_image wait_for_dialog --wait-for --no-click --timeout=20
+```
+
+The function raises an error if the image does not appear before the timeout.
+`--no-click` cannot be combined with click-specific options.
+
+Use `--delay` to move to the matched image, wait, and then click. A single
+value always waits exactly that many seconds:
+
+```sh
+ibot click_image click_chrome_icon --wait-for --delay=1
 ```
 
 A range chooses a new random delay within the inclusive range each time the
-generated function runs:
+image click:
 
 ```sh
-ibot click_image click_chrome_icon --wait-for --timeout=20 --stall=10-20
+ibot click_image click_chrome_icon --wait-for --timeout=20 --delay=10-20
 ```
 
-Decimal durations such as `--stall=0.5-1.5` are supported. Stalling also works
-without `--wait-for`; in that case the function checks once, then stalls only
-if that immediate check finds the image.
+Decimal durations such as `--delay=0.5-1.5` are supported. The legacy
+`--stall` spelling remains available as an alias.
 
 ### Clicking Every Match
 
@@ -399,7 +560,7 @@ ibot click_image click_all_icons --all --order=random --gap=0.5-3.8
 
 There is no gap after the final click. `--order` and `--gap` require `--all`.
 The existing `--vary` rule is calculated separately for every match.
-`--stall` happens once before the first click, while `--gap` happens between
+`--delay` moves and waits before every click, while `--gap` happens between
 clicks.
 
 With `--wait-for --all`, the generated function waits until at least one match
@@ -419,9 +580,11 @@ clicks.
 | `--vary=all` | Center | Single or `--all` | Chooses any point inside each clicked match |
 | `--confidence=N` | `0.9` | Everything | Sets OpenCV similarity from greater than `0` through `1` |
 | `--wait-for` | Off | Everything | Polls every 0.25 seconds until at least one match appears |
-| `--timeout=N` | `30` | `--wait-for` | Limits polling; otherwise has no effect |
-| `--stall=N` | None | Everything | Waits once after matching and before keys are held |
-| `--stall=MIN-MAX` | None | Everything | Chooses one random pre-click delay per function call |
+| `--no-click` | Off | `--wait-for` | Returns when a match appears without clicking it |
+| `--wait-until-gone` | Off | Click options | Polls every 0.25 seconds until no match remains, without clicking |
+| `--timeout=N` | `30` | Image waits | Limits polling; otherwise has no effect |
+| `--delay=N` | None | Clicks | Moves to each target and waits before clicking |
+| `--delay=MIN-MAX` | None | Clicks | Chooses a new random pre-click delay for each target |
 | `--all` | Off | Everything | Uses every match from the successful screenshot |
 | `--order=linear` | `linear` | `--all` | Sorts top-to-bottom, then left-to-right |
 | `--order=backwards` | `linear` | `--all` | Reverses linear order |
@@ -438,14 +601,14 @@ A generated image function always runs features in this order:
 1. Decode the embedded PNG and determine logical screen size.
 2. Search once, or poll when `--wait-for` is enabled.
 3. Raise without pressing keys if no image is found before the timeout.
-4. Sort or shuffle matches when `--all` is enabled.
-5. Apply `--stall` once.
+4. Return immediately when `--no-click` is enabled.
+5. Sort or shuffle matches when `--all` is enabled.
 6. Validate every `--hold` key, then press keys in the listed order.
-7. For each match, calculate `--vary`, click, and apply `--gap` unless it was the final match.
+7. For each match, calculate `--vary`, move and apply `--delay`, click, and apply `--gap` unless it was the final match.
 8. Release every successfully held key in reverse order through `finally`.
 
-This means keys are never held while polling or stalling. With `--all`, they
-remain held during gaps so every click uses the requested modifiers.
+This means keys are never held while polling. With `--all`, they remain held
+during pre-click delays and gaps so every click uses the requested modifiers.
 
 All options can be combined in one command:
 
@@ -453,7 +616,7 @@ All options can be combined in one command:
 ibot click_image click_targets \
   --confidence=0.85 \
   --wait-for --timeout=20 \
-  --stall=1-2 \
+  --delay=1-2 \
   --all --order=random --gap=0.5-3.8 \
   --vary=all \
   --hold=shift+control+cmd \
@@ -474,13 +637,18 @@ here for readability:
 import base64
 import io
 import random
+import time
 
 import pyautogui
 from PIL import Image
 
 
-def click_chrome_icon() -> None:
-    """Locate the embedded image on screen and click it."""
+def click_chrome_icon(*, confidence=0.9, wait_for=False,
+        wait_until_gone=False, timeout=30, poll_interval=0.25,
+        click=True, all_matches=False, order="linear",
+        position="center", variation=0, delay=None, gap=None,
+        hold=()) -> None:
+    """Find the captured image; runtime arguments control waiting and clicking."""
     image_data = (
         "iVBORw0KGgoAAA...complete PNG data..."
     )
@@ -491,12 +659,10 @@ def click_chrome_icon() -> None:
         screen = pyautogui.screenshot().convert("RGB")
         if screen.size != screen_size:
             screen = screen.resize(screen_size, Image.Resampling.LANCZOS)
-        match = pyautogui.locate(image, screen, confidence=0.9)
-        return [] if match is None else [match]
+        return list(pyautogui.locateAll(image, screen, confidence=confidence))
 
     matches = find_images()
-    # The generated function applies waiting, ordering, stalling, held keys,
-    # click variation, gaps, and guaranteed key release as requested.
+    # Runtime code applies waiting, ordering, placement, delays, and held keys.
 ```
 
 Use `--no-imports` when the destination already has the required imports:
@@ -505,10 +671,9 @@ Use `--no-imports` when the destination already has the required imports:
 ibot click_image click_chrome_icon --vary=all --no-imports
 ```
 
-In that case, the destination must provide `base64`, `io`, `pyautogui`, and an
-`Image` symbol from PIL. It must also provide `time` when waiting, stalling, or
-using a gap, and `random` when click variation, random ordering, ranged
-stalling, or ranged gaps are enabled.
+In that case, image-click functions require `base64`, `io`, `random`, `time`,
+`pyautogui`, and an `Image` symbol from PIL. Image-existence functions require
+`base64`, `io`, `pyautogui`, and `Image`.
 
 Embedding makes the function portable as a single source artifact, but image
 recognition is not guaranteed across different systems. Retina screenshots are
@@ -551,5 +716,5 @@ security tests.
 - `internal/web`: loopback HTTP server, streamed capture API, and embedded UI
 
 The generated Python uses `pyautogui`, Pillow, and OpenCV-backed PyScreeze
-matching where image confidence is enabled. `random`, `time`, `base64`, and
-`io` are emitted only when the selected flags require them.
+matching where image confidence is enabled. Runtime dependencies are emitted
+with each function unless `--no-imports` is selected.

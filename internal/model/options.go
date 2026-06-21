@@ -102,6 +102,7 @@ type PointOptions struct {
 	Name           string
 	Position       Position
 	Variation      Variation
+	Delay          *SecondsRange
 	Hold           []string
 	IncludeImports bool
 }
@@ -110,16 +111,42 @@ type BoxOptions struct {
 	Name           string
 	Corners        [4]Position
 	Variation      Variation
+	Grid           *GridTarget
+	Delay          *SecondsRange
 	IncludeImports bool
 }
 
+type GridTarget struct {
+	Rows    int
+	Columns int
+	Cell    int
+}
+
+func NewGridTarget(rows, columns, cell int) (*GridTarget, error) {
+	if rows <= 0 || columns <= 0 {
+		return nil, fmt.Errorf("grid rows and columns must be positive integers")
+	}
+	if columns > int(^uint(0)>>1)/rows {
+		return nil, fmt.Errorf("grid is too large")
+	}
+	if cell < 0 || cell >= rows*columns {
+		return nil, fmt.Errorf("grid cell must be between 0 and %d", rows*columns-1)
+	}
+	return &GridTarget{Rows: rows, Columns: columns, Cell: cell}, nil
+}
+
 type ImageOptions struct {
-	Name           string
-	PNG            []byte
-	Variation      Variation
-	Confidence     float64
-	WaitFor        bool
-	Timeout        float64
+	Name          string
+	PNG           []byte
+	Variation     Variation
+	Confidence    float64
+	ReturnExists  bool
+	WaitFor       bool
+	NoClick       bool
+	WaitUntilGone bool
+	Timeout       float64
+	Delay         *SecondsRange
+	// Stall is retained for callers using the pre-delay option name.
 	Stall          *SecondsRange
 	ClickAll       bool
 	Order          string

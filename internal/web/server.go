@@ -10,7 +10,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -18,13 +20,20 @@ import (
 	"github.com/phillip-england/ibot/internal/app"
 	"github.com/phillip-england/ibot/internal/generator"
 	"github.com/phillip-england/ibot/internal/model"
+	"github.com/phillip-england/ibot/internal/project"
+	"github.com/phillip-england/ibot/internal/target"
 )
 
 //go:embed static/*
 var assets embed.FS
 
 type Server struct {
-	Service app.Service
+	Service    app.Service
+	ProjectDir string
+	ExportDir  string
+	PointsDir  string
+	BoxesDir   string
+	ImagesDir  string
 }
 
 type Options struct {
@@ -34,18 +43,25 @@ type Options struct {
 }
 
 type captureRequest struct {
-	Mode       string  `json:"mode"`
-	Name       string  `json:"name"`
-	Vary       string  `json:"vary"`
-	Confidence float64 `json:"confidence"`
-	WaitFor    bool    `json:"waitFor"`
-	Timeout    float64 `json:"timeout"`
-	Stall      string  `json:"stall"`
-	ClickAll   bool    `json:"all"`
-	Order      string  `json:"order"`
-	Gap        string  `json:"gap"`
-	Hold       string  `json:"hold"`
-	NoImports  bool    `json:"noImports"`
+	Mode          string  `json:"mode"`
+	Output        string  `json:"output"`
+	Name          string  `json:"name"`
+	Vary          string  `json:"vary"`
+	GridRows      int     `json:"gridRows"`
+	GridColumns   int     `json:"gridColumns"`
+	GridCell      int     `json:"gridCell"`
+	Confidence    float64 `json:"confidence"`
+	WaitFor       bool    `json:"waitFor"`
+	NoClick       bool    `json:"noClick"`
+	WaitUntilGone bool    `json:"waitUntilGone"`
+	Timeout       float64 `json:"timeout"`
+	Delay         string  `json:"delay"`
+	Stall         string  `json:"stall"`
+	ClickAll      bool    `json:"all"`
+	Order         string  `json:"order"`
+	Gap           string  `json:"gap"`
+	Hold          string  `json:"hold"`
+	NoImports     bool    `json:"noImports"`
 }
 
 type streamEvent struct {
@@ -56,6 +72,11 @@ type streamEvent struct {
 }
 
 func (server Server) Handler() (http.Handler, error) {
+	var err error
+	server, err = server.withProject()
+	if err != nil {
+		return nil, err
+	}
 	static, err := fs.Sub(assets, "static")
 	if err != nil {
 		return nil, err
@@ -66,6 +87,8 @@ func (server Server) Handler() (http.Handler, error) {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /api/capture", server.capture)
+	mux.HandleFunc("GET /api/targets", server.targets)
+	mux.HandleFunc("POST /api/targets/{kind}/{name}/capture", server.captureTarget)
 	return secureLocal(mux), nil
 }
 
@@ -75,6 +98,28 @@ func (server Server) Serve(ctx context.Context, options Options) error {
 	}
 	if err := validateLoopback(options.Address); err != nil {
 		return err
+	}
+	var err error
+	server, err = server.withProject()
+	if err != nil {
+		return err
+	}
+	if server.ExportDir != "" {
+		if err := validatePythonModule(server.ExportDir); err != nil {
+			return err
+		}
+	}
+	for label, dir := range map[string]string{"points": server.PointsDir, "boxes": server.BoxesDir, "images": server.ImagesDir} {
+		if dir == "" {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("%s directory: %w", label, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s path is not a directory", label)
+		}
 	}
 	handler, err := server.Handler()
 	if err != nil {
@@ -106,11 +151,93 @@ func (server Server) Serve(ctx context.Context, options Options) error {
 	return err
 }
 
+func (server Server) withProject() (Server, error) {
+	if server.ProjectDir == "" {
+		return server, nil
+	}
+	layout, err := project.Open(server.ProjectDir)
+	if err != nil {
+		return Server{}, err
+	}
+	server.ExportDir = layout.Root
+	server.PointsDir = layout.Points
+	server.BoxesDir = layout.Boxes
+	server.ImagesDir = layout.Images
+	return server, nil
+}
+
+func (server Server) targets(writer http.ResponseWriter, _ *http.Request) {
+	entries, err := target.List(server.PointsDir, server.BoxesDir)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"targets":          entries,
+		"pointsConfigured": server.PointsDir != "",
+		"boxesConfigured":  server.BoxesDir != "",
+	})
+}
+
+func (server Server) captureTarget(writer http.ResponseWriter, request *http.Request) {
+	kind, name := request.PathValue("kind"), request.PathValue("name")
+	dir := server.PointsDir
+	if kind == "box" {
+		dir = server.BoxesDir
+	} else if kind != "point" {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "target kind must be point or box"})
+		return
+	}
+	path, err := target.Path(dir, name)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		writeJSON(writer, http.StatusNotFound, map[string]string{"error": "target file does not exist"})
+		return
+	}
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "streaming is unavailable"})
+		return
+	}
+	writer.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(writer)
+	emit := func(event streamEvent) { _ = encoder.Encode(event); flusher.Flush() }
+	prompt := func(message string) { emit(streamEvent{Type: "prompt", Message: message}) }
+	emit(streamEvent{Type: "status", Message: "Editing " + name})
+	if kind == "point" {
+		point, captureErr := server.Service.Capture.Point(request.Context(), prompt)
+		if captureErr == nil {
+			captureErr = target.WritePoint(path, point)
+		}
+		err = captureErr
+	} else {
+		corners, captureErr := server.Service.Capture.Corners(request.Context(), prompt)
+		if captureErr == nil {
+			captureErr = target.WriteBox(path, corners)
+		}
+		err = captureErr
+	}
+	if err != nil {
+		emit(streamEvent{Type: "error", Message: err.Error()})
+		return
+	}
+	emit(streamEvent{Type: "target", Message: "Updated " + filepath.Base(path)})
+}
+
 func (server Server) capture(writer http.ResponseWriter, request *http.Request) {
 	request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
 	var input captureRequest
 	if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "invalid JSON request"})
+		return
+	}
+	if input.Output == "json" || input.Output == "image" {
+		server.captureAsset(writer, request, input)
 		return
 	}
 	parsed, err := parseRequest(input)
@@ -140,23 +267,108 @@ func (server Server) capture(writer http.ResponseWriter, request *http.Request) 
 		source, err = server.Service.Point(request.Context(), parsed.point, prompt)
 	case "box":
 		source, err = server.Service.Box(request.Context(), parsed.box, prompt)
-	case "click_image":
+	case "click_image", "image_exists":
 		source, err = server.Service.Image(request.Context(), parsed.image, prompt)
 	}
 	if err != nil {
 		emit(streamEvent{Type: "error", Message: err.Error()})
 		return
 	}
+	message := "Generated successfully"
+	if server.ExportDir != "" {
+		if err := exportPythonFunction(server.ExportDir, parsed.name, source); err != nil {
+			emit(streamEvent{Type: "error", Message: fmt.Sprintf("export generated function: %v", err)})
+			return
+		}
+		message = fmt.Sprintf("Generated and exported to %s", server.ExportDir)
+	}
 	emit(streamEvent{
 		Type:           "source",
 		Source:         source,
 		InstallCommand: installCommand(parsed.mode),
-		Message:        "Generated successfully",
+		Message:        message,
 	})
 }
 
+func (server Server) captureAsset(writer http.ResponseWriter, request *http.Request, input captureRequest) {
+	mode := strings.ToLower(strings.TrimSpace(input.Mode))
+	name := strings.TrimSpace(input.Name)
+	var dir, extension string
+	if input.Output == "json" && mode == "click" {
+		dir, extension = server.PointsDir, ".json"
+	} else if input.Output == "json" && mode == "box" {
+		dir, extension = server.BoxesDir, ".json"
+	} else if input.Output == "image" && (mode == "click_image" || mode == "image_exists") {
+		dir, extension = server.ImagesDir, ".png"
+	} else {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "selected output is not available for this capture mode"})
+		return
+	}
+	path, err := assetPath(dir, name, extension)
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		writeJSON(writer, http.StatusInternalServerError, map[string]string{"error": "streaming is unavailable"})
+		return
+	}
+	writer.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(writer)
+	emit := func(event streamEvent) { _ = encoder.Encode(event); flusher.Flush() }
+	prompt := func(message string) { emit(streamEvent{Type: "prompt", Message: message}) }
+	emit(streamEvent{Type: "status", Message: "Capture started"})
+	if input.Output == "json" && mode == "click" {
+		point, captureErr := server.Service.Capture.Point(request.Context(), prompt)
+		if captureErr == nil {
+			captureErr = target.WritePoint(path, point)
+		}
+		err = captureErr
+	} else {
+		corners, captureErr := server.Service.Capture.Corners(request.Context(), prompt)
+		if captureErr == nil && input.Output == "json" {
+			captureErr = target.WriteBox(path, corners)
+		}
+		if captureErr == nil && input.Output == "image" {
+			var png []byte
+			png, captureErr = server.Service.Capture.PNG(request.Context(), corners)
+			if captureErr == nil {
+				captureErr = target.WriteImage(path, png)
+			}
+		}
+		err = captureErr
+	}
+	if err != nil {
+		emit(streamEvent{Type: "error", Message: err.Error()})
+		return
+	}
+	emit(streamEvent{Type: "asset", Message: fmt.Sprintf("Saved %s", path)})
+}
+
+func assetPath(dir, name, extension string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("this output requires an initialized project")
+	}
+	name = strings.TrimSpace(name)
+	if strings.HasSuffix(strings.ToLower(name), extension) {
+		name = name[:len(name)-len(extension)]
+	}
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\\`) {
+		return "", fmt.Errorf("file name must be a simple non-empty name")
+	}
+	for _, char := range name {
+		if !(char == '_' || char == '-' || char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9') {
+			return "", fmt.Errorf("file name may contain only letters, numbers, underscores, and hyphens")
+		}
+	}
+	return filepath.Join(dir, name+extension), nil
+}
+
 func installCommand(mode string) string {
-	if mode == "click_image" {
+	if mode == "click_image" || mode == "image_exists" {
 		return "uv add pyautogui pillow opencv-python-headless"
 	}
 	return "uv add pyautogui"
@@ -164,6 +376,7 @@ func installCommand(mode string) string {
 
 type parsedRequest struct {
 	mode  string
+	name  string
 	point model.PointOptions
 	box   model.BoxOptions
 	image model.ImageOptions
@@ -171,8 +384,8 @@ type parsedRequest struct {
 
 func parseRequest(input captureRequest) (parsedRequest, error) {
 	input.Mode = strings.ToLower(strings.TrimSpace(input.Mode))
-	if input.Mode != "click" && input.Mode != "box" && input.Mode != "click_image" {
-		return parsedRequest{}, fmt.Errorf("mode must be click, box, or click_image")
+	if input.Mode != "click" && input.Mode != "box" && input.Mode != "click_image" && input.Mode != "image_exists" {
+		return parsedRequest{}, fmt.Errorf("mode must be click, box, click_image, or image_exists")
 	}
 	if input.Name == "" {
 		switch input.Mode {
@@ -180,6 +393,8 @@ func parseRequest(input captureRequest) (parsedRequest, error) {
 			input.Name = "click_position"
 		case "click_image":
 			input.Name = "click_image"
+		case "image_exists":
+			input.Name = "image_exists"
 		default:
 			input.Name = "click_box"
 		}
@@ -198,10 +413,25 @@ func parseRequest(input captureRequest) (parsedRequest, error) {
 	if err != nil {
 		return parsedRequest{}, err
 	}
-	result := parsedRequest{mode: input.Mode}
-	result.point = model.PointOptions{Name: input.Name, Variation: variation, Hold: hold, IncludeImports: !input.NoImports}
-	result.box = model.BoxOptions{Name: input.Name, Variation: variation, IncludeImports: !input.NoImports}
-	if input.Mode != "click_image" {
+	delayValue := input.Delay
+	if delayValue == "" {
+		delayValue = input.Stall
+	}
+	delay, err := model.ParseSecondsRange(delayValue)
+	if err != nil {
+		return parsedRequest{}, fmt.Errorf("delay: %w", err)
+	}
+	result := parsedRequest{mode: input.Mode, name: input.Name}
+	result.point = model.PointOptions{Name: input.Name, Variation: variation, Delay: delay, Hold: hold, IncludeImports: !input.NoImports}
+	var grid *model.GridTarget
+	if input.Mode == "box" && (input.GridRows != 0 || input.GridColumns != 0 || input.GridCell != 0) {
+		grid, err = model.NewGridTarget(input.GridRows, input.GridColumns, input.GridCell)
+		if err != nil {
+			return parsedRequest{}, err
+		}
+	}
+	result.box = model.BoxOptions{Name: input.Name, Variation: variation, Grid: grid, Delay: delay, IncludeImports: !input.NoImports}
+	if input.Mode != "click_image" && input.Mode != "image_exists" {
 		return result, nil
 	}
 	if input.Confidence == 0 {
@@ -219,10 +449,7 @@ func parseRequest(input captureRequest) (parsedRequest, error) {
 	if !finite(input.Timeout) || input.Timeout <= 0 {
 		return parsedRequest{}, fmt.Errorf("timeout must be greater than zero")
 	}
-	stall, err := model.ParseSecondsRange(input.Stall)
-	if err != nil {
-		return parsedRequest{}, fmt.Errorf("stall: %w", err)
-	}
+	stall := delay
 	gap, err := model.ParseSecondsRange(input.Gap)
 	if err != nil {
 		return parsedRequest{}, fmt.Errorf("gap: %w", err)
@@ -234,9 +461,24 @@ func parseRequest(input captureRequest) (parsedRequest, error) {
 	if !input.ClickAll && (input.Order != "linear" || gap != nil) {
 		return parsedRequest{}, fmt.Errorf("order and gap require all")
 	}
+	if input.WaitFor && input.WaitUntilGone {
+		return parsedRequest{}, fmt.Errorf("wait for and wait until gone cannot be used together")
+	}
+	if input.NoClick && !input.WaitFor {
+		return parsedRequest{}, fmt.Errorf("no click requires wait for")
+	}
+	if input.NoClick && (variation.All || variation.Pixels > 0 || stall != nil || input.ClickAll || input.Order != "linear" || gap != nil || len(hold) > 0) {
+		return parsedRequest{}, fmt.Errorf("no click cannot be combined with click options")
+	}
+	if input.Mode == "image_exists" && (input.WaitFor || input.NoClick || input.WaitUntilGone || variation.All || variation.Pixels > 0 || stall != nil || input.ClickAll || input.Order != "linear" || gap != nil || len(hold) > 0) {
+		return parsedRequest{}, fmt.Errorf("image existence checks cannot be combined with click or wait options")
+	}
+	if input.WaitUntilGone && (variation.All || variation.Pixels > 0 || stall != nil || input.ClickAll || input.Order != "linear" || gap != nil || len(hold) > 0) {
+		return parsedRequest{}, fmt.Errorf("wait until gone cannot be combined with click options")
+	}
 	result.image = model.ImageOptions{
-		Name: input.Name, Variation: variation, Confidence: input.Confidence,
-		WaitFor: input.WaitFor, Timeout: input.Timeout, Stall: stall,
+		Name: input.Name, Variation: variation, Confidence: input.Confidence, ReturnExists: input.Mode == "image_exists",
+		WaitFor: input.WaitFor, NoClick: input.NoClick, WaitUntilGone: input.WaitUntilGone, Timeout: input.Timeout, Delay: stall,
 		ClickAll: input.ClickAll, Order: input.Order, Gap: gap, Hold: hold,
 		IncludeImports: !input.NoImports,
 	}

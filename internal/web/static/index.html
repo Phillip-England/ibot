@@ -14,7 +14,13 @@
         <p class="eyebrow">Local automation studio</p>
         <h1>Capture once.<br><span>Generate clean Python.</span></h1>
       </div>
-      <div class="local-badge"><i></i> Running locally</div>
+      <div class="hero-actions">
+        <nav class="site-nav" aria-label="Main navigation">
+          <a class="active" href="/">Studio</a>
+          <a href="/utilities.html">Utilities</a>
+        </nav>
+        <div class="local-badge"><i></i> Running locally</div>
+      </div>
     </header>
 
     <section class="workspace">
@@ -22,7 +28,8 @@
         <div class="mode-picker" role="radiogroup" aria-label="Capture mode">
           <label><input type="radio" name="mode" value="click" checked><span>Point</span></label>
           <label><input type="radio" name="mode" value="box"><span>Box</span></label>
-          <label><input type="radio" name="mode" value="click_image"><span>Image</span></label>
+          <label><input type="radio" name="mode" value="click_image"><span>Click image</span></label>
+          <label><input type="radio" name="mode" value="image_exists"><span>Image exists</span></label>
         </div>
 
         <div class="section-heading">
@@ -35,16 +42,28 @@
 
         <div class="field-grid">
           <label class="field wide">
-            <span>Function name</span>
+            <span>Save capture as</span>
+            <select id="output-kind">
+              <option value="function">Python function</option>
+              <option value="json">Point JSON</option>
+            </select>
+          </label>
+          <label class="field wide">
+            <span id="name-label">Function name</span>
             <input id="name" name="name" value="click_position" spellcheck="false" autocomplete="off">
           </label>
-          <label class="field">
-            <span>Variation</span>
+          <p id="runtime-note" class="runtime-note wide">The capture is embedded in the generated function. Behavior settings below become overridable function-argument defaults, not fixed behavior.</p>
+          <label id="variation-field" class="field">
+            <span>Default variation</span>
             <input id="vary" name="vary" value="0" placeholder="0, 5, or all" spellcheck="false">
           </label>
-          <label class="field">
-            <span>Hold keys</span>
+          <label id="hold-field" class="field">
+            <span>Default held keys</span>
             <input id="hold" name="hold" placeholder="shift+control+cmd" spellcheck="false">
+          </label>
+          <label id="delay-field" class="field">
+            <span>Default pre-click delay</span>
+            <input id="delay" name="delay" placeholder="3 or 3-5" spellcheck="false">
           </label>
           <label id="click-anywhere-row" class="check-row wide" hidden>
             <input id="click-anywhere" type="checkbox">
@@ -52,39 +71,70 @@
           </label>
         </div>
 
+        <div id="grid-options" class="grid-options" hidden>
+          <div class="section-heading compact">
+            <div>
+              <p class="step">02 / Grid target</p>
+              <h2>Choose a sub-cell</h2>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label class="check-row wide">
+              <input id="grid-enabled" type="checkbox">
+              <span><b>Target one grid cell</b><small>Number cells from 0, left-to-right and top-to-bottom.</small></span>
+            </label>
+            <label class="field">
+              <span>Rows</span>
+              <input id="grid-rows" type="number" min="1" step="1" value="4" required>
+            </label>
+            <label class="field">
+              <span>Columns</span>
+              <input id="grid-columns" type="number" min="1" step="1" value="4" required>
+            </label>
+            <label class="field wide">
+              <span>Cell number (starts at 0)</span>
+              <input id="grid-cell" type="number" min="0" max="15" step="1" value="0" required>
+            </label>
+          </div>
+        </div>
+
         <div id="image-options" class="image-options" hidden>
           <div class="section-heading compact">
             <div>
               <p class="step">02 / Recognition</p>
-              <h2>Find and schedule</h2>
+              <h2 id="recognition-heading">Find and schedule</h2>
             </div>
           </div>
           <div class="field-grid">
             <label class="field">
-              <span>Confidence</span>
+              <span>Default confidence</span>
               <input id="confidence" type="number" min="0.01" max="1" step="0.01" value="0.9">
             </label>
-            <label class="field">
-              <span>Stall after match</span>
-              <input id="stall" placeholder="1 or 10-20">
-            </label>
-            <label class="check-row wide">
+            <label id="wait-for-row" class="check-row wide">
               <input id="wait-for" type="checkbox">
               <span><b>Wait for image</b><small>Poll until a match appears.</small></span>
             </label>
+            <label id="no-click-row" class="check-row wide">
+              <input id="no-click" type="checkbox">
+              <span><b>Do not click when found</b><small>Wait for the image, then return without moving the pointer.</small></span>
+            </label>
+            <label id="wait-gone-row" class="check-row wide">
+              <input id="wait-until-gone" type="checkbox">
+              <span><b>Wait until gone</b><small>Poll until the image is no longer visible; do not click.</small></span>
+            </label>
             <label class="field" id="timeout-field">
               <span>Timeout seconds</span>
-              <input id="timeout" type="number" min="0.01" step="0.25" value="30">
+              <input id="timeout" type="number" min="0.01" step="any" value="30">
             </label>
           </div>
 
-          <div class="section-heading compact multi-heading">
+          <div id="multiple-heading" class="section-heading compact multi-heading">
             <div>
               <p class="step">03 / Multiple matches</p>
               <h2>Sequence clicks</h2>
             </div>
           </div>
-          <div class="field-grid">
+          <div id="multiple-options" class="field-grid">
             <label class="check-row wide">
               <input id="click-all" type="checkbox">
               <span><b>Click every match</b><small>Use one screenshot and click each detected instance.</small></span>
@@ -104,7 +154,7 @@
           </div>
         </div>
 
-        <label class="check-row imports-row">
+        <label id="imports-row" class="check-row imports-row">
           <input id="no-imports" type="checkbox">
           <span><b>Omit imports</b><small>For destination modules that already provide dependencies.</small></span>
         </label>
@@ -117,8 +167,8 @@
       <section class="panel output-panel" aria-live="polite">
         <div class="output-header">
           <div>
-            <p class="step">Generated source</p>
-            <h2>Python output</h2>
+            <p id="output-eyebrow" class="step">Generated source</p>
+            <h2 id="output-heading">Python output</h2>
           </div>
           <button id="copy-button" class="copy-button" type="button" disabled>Copy code</button>
         </div>
@@ -144,6 +194,18 @@
           </ol>
         </div>
       </section>
+    </section>
+
+    <section id="saved-targets" class="panel targets-panel" hidden>
+      <div class="targets-header">
+        <div>
+          <p class="step">JSON targets</p>
+          <h2>Saved points and boxes</h2>
+        </div>
+        <p id="targets-status">Loaded from this ibot project.</p>
+      </div>
+      <div id="targets-list" class="targets-list"></div>
+      <p id="targets-empty" class="targets-empty" hidden>No JSON target files found.</p>
     </section>
   </main>
   <script src="/app.js" defer></script>

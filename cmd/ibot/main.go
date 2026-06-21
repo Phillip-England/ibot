@@ -24,8 +24,8 @@ func main() {
 	defer stop()
 	desktop := capture.NewDesktop()
 	service := app.Service{Capture: desktop}
-	webServer := ibotweb.Server{Service: service}
 	serve := func(ctx context.Context, options cli.ServeOptions) error {
+		webServer := ibotweb.Server{Service: service, ProjectDir: options.Project, ExportDir: options.Export, PointsDir: options.Points, BoxesDir: options.Boxes, ImagesDir: options.Images}
 		return webServer.Serve(ctx, ibotweb.Options{
 			Address: options.Address,
 			Open:    options.Open,

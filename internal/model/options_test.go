@@ -30,3 +30,18 @@ func TestRejectsInvalidRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestGridTargetUsesZeroBasedCellIndex(t *testing.T) {
+	grid, err := NewGridTarget(4, 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grid.Rows != 4 || grid.Columns != 4 || grid.Cell != 3 {
+		t.Fatalf("NewGridTarget = %#v", grid)
+	}
+	for _, cell := range []int{-1, 16} {
+		if _, err := NewGridTarget(4, 4, cell); err == nil {
+			t.Errorf("NewGridTarget accepted cell %d", cell)
+		}
+	}
+}
